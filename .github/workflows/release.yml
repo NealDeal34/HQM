@@ -4,6 +4,9 @@
 name: Release tagged build
 
 on:
+  push:
+    tags:
+      - '*'  
   workflow_call:
     secrets:
       MAVEN_USER:
