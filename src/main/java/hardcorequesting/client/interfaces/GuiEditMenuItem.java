@@ -471,47 +471,63 @@ public class GuiEditMenuItem extends GuiEditMenu {
         }
 
         public static void initItems() {
-            clear();
-            if (searchItems.isEmpty()) {
-                List<ItemStack> stacks = new ArrayList<>();
-                for (Object anItemRegistry : Item.itemRegistry) {
-                    try {
-                        Item item = (Item) anItemRegistry;
-                        //                    if (HardcoreFixes.hideFluidBlocks && item instanceof ItemBlock)
-                        //                    {
-                        //                        ItemBlock itemBlock = (ItemBlock)item;
-                        //                        if (itemBlock.field_150939_a == Blocks.lava || itemBlock.field_150939_a == Blocks.water || itemBlock.field_150939_a instanceof BlockLiquid || itemBlock.field_150939_a instanceof IFluidBlock)
-                        //                            continue;
-                        //                    }
-                        item.getSubItems(item, item.getCreativeTab(), stacks);
-                    } catch (Exception ignore) {
-                    }
-                }
-                EntityPlayer player = Minecraft.getMinecraft().thePlayer;
-                for (ItemStack stack : stacks) {
-                    try {
-                        List tooltipList = stack.getTooltip(player, false);
-                        List advTooltipList = stack.getTooltip(player, true);
-                        String searchString = "";
-                        for (Object string : tooltipList) {
-                            if (string != null)
-                                searchString += string + "\n";
-                        }
-                        String advSearchString = "";
-                        for (Object string : advTooltipList) {
-                            if (string != null)
-                                advSearchString += string + "\n";
-                        }
-                        searchItems.add(new SearchEntry(searchString, advSearchString, new ElementItem(stack)));
-                    } catch (Throwable ignore) {
-                    }
-                }
-                for (Fluid fluid : FluidRegistry.getRegisteredFluids().values()) {
-                    String search = fluid.getLocalizedName(null);
-                    searchFluids.add(new SearchEntry(search, search, new ElementFluid(fluid)));
-                }
+    clear();
+    if (searchItems.isEmpty()) {
+        List<ItemStack> stacks = new ArrayList<>();
+        for (Object anItemRegistry : Item.itemRegistry) {
+            try {
+                Item item = (Item) anItemRegistry;
+                item.getSubItems(item, item.getCreativeTab(), stacks);
+            } catch (Exception ignore) {
             }
         }
+        EntityPlayer player = Minecraft.getMinecraft().thePlayer;
+        for (ItemStack stack : stacks) {
+            try {
+                // 添加安全检查：跳过NEI生物刷怪蛋
+                if (stack.getItem() instanceof codechicken.nei.ItemMobSpawner) {
+                    // 为NEI生物刷怪蛋创建安全的工具提示
+                    String displayName = stack.getDisplayName();
+                    if (displayName == null || displayName.isEmpty()) {
+                        displayName = "Mob Spawner";
+                    }
+                    
+                    String searchString = displayName + "\nRight click to spawn mob";
+                    String advSearchString = searchString;
+                    
+                    searchItems.add(new SearchEntry(searchString, advSearchString, new ElementItem(stack)));
+                    continue;
+                }
+                
+                // 原来的代码
+                List tooltipList = stack.getTooltip(player, false);
+                List advTooltipList = stack.getTooltip(player, true);
+                String searchString = "";
+                for (Object string : tooltipList) {
+                    if (string != null)
+                        searchString += string + "\n";
+                }
+                String advSearchString = "";
+                for (Object string : advTooltipList) {
+                    if (string != null)
+                        advSearchString += string + "\n";
+                }
+                searchItems.add(new SearchEntry(searchString, advSearchString, new ElementItem(stack)));
+            } catch (InstantiationException e) {
+                // 捕获InstantiationException（来自NEI生物刷怪蛋）
+                String displayName = stack.getItem().getItemStackDisplayName(stack);
+                String searchStr = displayName + "\nMob Spawner";
+                searchItems.add(new SearchEntry(searchStr, searchStr, new ElementItem(stack)));
+            } catch (Throwable ignore) {
+                // 其他异常，跳过这个物品
+            }
+        }
+        for (Fluid fluid : FluidRegistry.getRegisteredFluids().values()) {
+            String search = fluid.getLocalizedName(null);
+            searchFluids.add(new SearchEntry(search, search, new ElementFluid(fluid)));
+        }
+    }
+}
 
         public static void clear() {
             searchFluids.clear();
