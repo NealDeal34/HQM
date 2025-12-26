@@ -4,9 +4,31 @@
 name: Release tagged build
 
 on:
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: '要发布的版本（必须已存在的标签）'
+        required: true
+        type: string
+        default: ''
+      workspace_input:
+        description: 'Gradle 工作空间设置'
+        required: false
+        default: "setupCIWorkspace"
+        type: choice
+        options:
+          - setupCIWorkspace
+          - setupDecompWorkspace
+  
+  # 标签推送触发
   push:
     tags:
-      - '*'  
+      - 'v*'           # v1.0.0, v2.0.0-rc.1
+      - '*.*.*'        # 1.0.0, 2.0.0-rc.1
+      - '*.*'          # 1.0, 2.0
+  
+  # 可重用工作流
   workflow_call:
     secrets:
       MAVEN_USER:
@@ -28,10 +50,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     env:
-      VERSION: ${{ github.ref_name }}
-      RELEASE_VERSION: ${{ github.ref_name }}
-      SNAPSHOT: ${{ endsWith(github.ref_name, '-snapshot') || contains(github.event.head_commit.message, '[snapshot]') }}
-      PRERELEASE: ${{ endsWith(github.ref_name, '-pre') }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name }}
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name }}
+      SNAPSHOT: ${{ endsWith(github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name, '-snapshot') || contains(github.event.head_commit.message, '[snapshot]') }}
+      PRERELEASE: ${{ endsWith(github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name, '-pre') }}
+      WORKSPACE_SETTING: ${{ github.event_name == 'workflow_dispatch' && inputs.workspace_input || inputs.workspace || 'setupCIWorkspace' }}
       MAVEN_PUBLISHING_URL: ${{ vars.MAVEN_PUBLISHING_URL || 'https://nexus.gtnewhorizons.com/repository/releases/' }}
     steps:
       - name: Checkout mod repo
@@ -39,6 +62,8 @@ jobs:
         with:
           fetch-depth: 32
           submodules: recursive
+          # 如果是手动触发，检查指定标签
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || '' }}
 
       - name: Determine JDK versions
         id: list-jdk-versions
@@ -73,7 +98,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Setup the workspace
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' ${{ inputs.workspace }}
+        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' ${{ env.WORKSPACE_SETTING }}
 
       - name: Build the mod
         run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' assemble
