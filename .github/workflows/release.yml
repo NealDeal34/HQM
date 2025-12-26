@@ -24,9 +24,7 @@ on:
   # 标签推送触发
   push:
     tags:
-      - 'v*'           # v1.0.0, v2.0.0-rc.1
-      - '*.*.*'        # 1.0.0, 2.0.0-rc.1
-      - '*.*'          # 1.0, 2.0
+      - '*'
   
   # 可重用工作流
   workflow_call:
@@ -57,13 +55,28 @@ jobs:
       WORKSPACE_SETTING: ${{ github.event_name == 'workflow_dispatch' && inputs.workspace_input || inputs.workspace || 'setupCIWorkspace' }}
       MAVEN_PUBLISHING_URL: ${{ vars.MAVEN_PUBLISHING_URL || 'https://nexus.gtnewhorizons.com/repository/releases/' }}
     steps:
+      - name: Debug info
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Version override: ${{ inputs.version_override }}"
+          echo "GitHub ref: ${{ github.ref }}"
+          echo "GitHub ref_name: ${{ github.ref_name }}"
+
       - name: Checkout mod repo
         uses: actions/checkout@v5
         with:
           fetch-depth: 32
           submodules: recursive
-          # 如果是手动触发，检查指定标签
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || '' }}
+          # 对于手动触发，使用标签
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.version_override) || github.ref }}
+
+      - name: Verify checkout
+        run: |
+          echo "当前所在分支/标签:"
+          git describe --tags --always || true
+          git status
+          echo "最近的标签:"
+          git tag --list | tail -10 || true
 
       - name: Determine JDK versions
         id: list-jdk-versions
