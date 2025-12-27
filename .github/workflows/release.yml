@@ -1,176 +1,31 @@
-# This workflow will build a Java project with Gradle and cache/restore any dependencies to improve the workflow execution time
-# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
-
 name: Release tagged build
 
 on:
-  # 手动触发
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发
     inputs:
-      version_override:
-        description: '要发布的版本（必须已存在的标签）'
+      tag_name:
+        description: '要发布的标签（如 v1.0.0）'
         required: true
         type: string
-        default: ''
-      workspace_input:
-        description: 'Gradle 工作空间设置'
+      draft:
+        description: '是否创建为草稿'
         required: false
-        default: "setupCIWorkspace"
-        type: choice
-        options:
-          - setupCIWorkspace
-          - setupDecompWorkspace
-  
-  # 标签推送触发
-  push:
-    tags:
-      - '*'
-  
-  # 可重用工作流
-  workflow_call:
-    secrets:
-      MAVEN_USER:
+        type: boolean
+        default: false
+      prerelease:
+        description: '是否标记为预发布版'
         required: false
-      MAVEN_PASSWORD:
-        required: false
-      CURSEFORGE_TOKEN:
-        required: false
-      MODRINTH_TOKEN:
-        required: false
-    inputs:
-      workspace:
-        description: 'setupCIWorkspace/setupDecompWorkspace'
-        required: false
-        default: "setupCIWorkspace"
-        type: string
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    env:
-      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name }}
-      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name }}
-      SNAPSHOT: ${{ endsWith(github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name, '-snapshot') || contains(github.event.head_commit.message, '[snapshot]') }}
-      PRERELEASE: ${{ endsWith(github.event_name == 'workflow_dispatch' && inputs.version_override || github.ref_name, '-pre') }}
-      WORKSPACE_SETTING: ${{ github.event_name == 'workflow_dispatch' && inputs.workspace_input || inputs.workspace || 'setupCIWorkspace' }}
-      MAVEN_PUBLISHING_URL: ${{ vars.MAVEN_PUBLISHING_URL || 'https://nexus.gtnewhorizons.com/repository/releases/' }}
-    steps:
-      - name: Debug info
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Version override: ${{ inputs.version_override }}"
-          echo "GitHub ref: ${{ github.ref }}"
-          echo "GitHub ref_name: ${{ github.ref_name }}"
-
-      - name: Checkout mod repo
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 32
-          submodules: recursive
-          # 对于手动触发，使用标签
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.version_override) || github.ref }}
-
-      - name: Verify checkout
-        run: |
-          echo "当前所在分支/标签:"
-          git describe --tags --always || true
-          git status
-          echo "最近的标签:"
-          git tag --list | tail -10 || true
-
-      - name: Determine JDK versions
-        id: list-jdk-versions
-        shell: bash
-        run: |
-          (
-            echo 'java-versions<<EOF'
-            echo 8
-            echo 17
-            echo 21
-            if [[ -f gradle/gradle-daemon-jvm.properties ]]; then
-              yq -pprops -oprops '.toolchainVersion' gradle/gradle-daemon-jvm.properties
-            fi
-            echo EOF
-          ) | tee -a "${GITHUB_OUTPUT}"
-
-      - name: Set up JDK versions
-        uses: actions/setup-java@v5
-        with:
-          java-version: ${{ steps.list-jdk-versions.outputs.java-versions }}
-          distribution: 'zulu'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: "https://gradle.com/terms-of-service"
-          build-scan-terms-of-use-agree: "yes"
-          validate-wrappers: true
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Setup the workspace
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' ${{ env.WORKSPACE_SETTING }}
-
-      - name: Build the mod
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' assemble
-
-      # Continue on error in the following steps to make sure releases still get made even if one of the methods fails
-
-      - name: Delete old release if it already exists
-        run: gh release delete --yes "${RELEASE_VERSION}"
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Release under current tag
-        run: |
-          PRERELEASE_FLAG=""
-          # DreamAssemblerXXL unfortunately breaks if prereleases are tagged as such on GitHub, so we only check for
-          # $SNAPSHOT here.
-          if [[ "$SNAPSHOT" == "true" ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-          CHANGELOG_OVERRIDE=".changelogs/${RELEASE_VERSION}.md"
-          if [[ -f "$CHANGELOG_OVERRIDE" ]]; then
-            echo "Using changelog override: $CHANGELOG_OVERRIDE"
-            export "CHANGELOG_FILE=$CHANGELOG_OVERRIDE"
-            echo "CHANGELOG_FILE=${CHANGELOG_FILE}" >> $GITHUB_ENV
-          else
-            echo "Generating changelog notes..."
-            export "CHANGELOG_FILE=$(mktemp --suffix=.md)"
-            echo "CHANGELOG_FILE=${CHANGELOG_FILE}" >> $GITHUB_ENV
-            gh api --method POST -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-              -f tag_name="${RELEASE_VERSION}" \
-              --jq ".body" > "${CHANGELOG_FILE}"
-          fi
-          cat "${CHANGELOG_FILE}"
-          gh release create "${RELEASE_VERSION}" -F "${CHANGELOG_FILE}" ${PRERELEASE_FLAG} ./build/libs/*.jar
-        shell: bash
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish to Maven
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' assemble publish -x test
-        continue-on-error: true
-        env:
-          MAVEN_USER: ${{ secrets.MAVEN_USER }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
-        if: ${{ env.MAVEN_USER != '' }}
-
-      - name: Publish to Modrinth
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' assemble publish -x test
-        continue-on-error: true
-        env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        if: ${{ env.SNAPSHOT != 'true' && env.PRERELEASE != 'true' }}
-
-      - name: Publish to Curseforge
-        run: ./gradlew --build-cache --info --stacktrace -PmavenPublishUrl='${{ env.MAVEN_PUBLISHING_URL }}' assemble publish -x test
-        continue-on-error: true
-        env:
-          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
-        if: ${{ env.SNAPSHOT != 'true' && env.PRERELEASE != 'true' }}
+  release-tags:
+    uses: GTNewHorizons/GTNH-Actions-Workflows/.github/workflows/release-tags.yml@master
+    with:
+      tag_name: ${{ github.event.inputs.tag_name }}
+      draft: ${{ github.event.inputs.draft }}
+      prerelease: ${{ github.event.inputs.prerelease }}
+    secrets: inherit
